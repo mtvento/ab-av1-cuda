@@ -1,109 +1,25 @@
-use crate::{
-    command::{
-        PROGRESS_CHARS,
-        args::{self, PixelFormat},
-    },
-    ffprobe,
-    log::ProgressLogger,
-    process::FfmpegOut,
-    vmaf::{self, VmafOut},
-};
-use anyhow::Context;
-use clap::Parser;
-use indicatif::{ProgressBar, ProgressStyle};
-use std::{
-    path::PathBuf,
-    pin::pin,
-    time::{Duration, Instant},
-};
-use tokio_stream::StreamExt;
+// src/command/vmaf.rs
+// ==== Patch Start: run_vmaf enhancements ====
+use std::process::Command;
+use std::path::Path;
+use crate::vmaf_cuda_path_detection::find_vmaf_cuda;
+use crate::vmaf_json_parsing::parse_vmaf_output;
+use crate::debuglog;
 
-/// Full VMAF score calculation, distorted file vs reference file.
-/// Works with videos and images.
-///
-/// * Auto sets model version (4k or 1k) according to resolution.
-/// * Auto sets `n_threads` to system threads.
-/// * Auto upscales lower resolution videos to the model.
-#[derive(Parser)]
-#[clap(verbatim_doc_comment)]
-#[group(skip)]
-pub struct Args {
-    /// Reference video file.
-    #[arg(long)]
-    pub reference: PathBuf,
-
-    /// Re-encoded/distorted video file.
-    #[arg(long)]
-    pub distorted: PathBuf,
-
-    #[clap(flatten)]
-    pub vmaf: args::Vmaf,
-
-    #[clap(flatten)]
-    pub score: args::ScoreArgs,
-}
-
-pub async fn vmaf(
-    Args {
-        reference,
-        distorted,
-        vmaf,
-        score,
-    }: Args,
-) -> anyhow::Result<()> {
-    let bar = ProgressBar::new(1).with_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.cyan.bold} {elapsed_precise:.bold} {wide_bar:.cyan/blue} ({msg}eta {eta})")?
-            .progress_chars(PROGRESS_CHARS)
-    );
-    bar.enable_steady_tick(Duration::from_millis(100));
-    bar.set_message("vmaf running, ");
-
-    let dprobe = ffprobe::probe(&distorted);
-    let rprobe = ffprobe::probe(&reference);
-    let nframes = dprobe.nframes().or_else(|_| rprobe.nframes());
-    let duration = dprobe.duration.as_ref().or(rprobe.duration.as_ref());
-    if let Ok(nframes) = nframes {
-        bar.set_length(nframes);
+pub fn run_vmaf(reference: &str, distorted: &str, debug: bool) -> Option<f64> {
+    let vmaf_path = find_vmaf_cuda();
+    debuglog!(debug, "vmaf_cuda path: {}", vmaf_path);
+    let output = Command::new(&vmaf_path)
+        .args(["--cuda", "--reference", reference, "--distorted", distorted, "--json"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        debuglog!(debug, "vmaf_cuda failed");
+        return None;
     }
-
-    let mut vmaf = pin!(vmaf::run(
-        &reference,
-        &distorted,
-        &vmaf.ffmpeg_lavfi(
-            dprobe.resolution,
-            PixelFormat::opt_max(dprobe.pixel_format(), rprobe.pixel_format()),
-            score.reference_vfilter.as_deref(),
-        ),
-        vmaf.fps(),
-    )?);
-    let mut logger = ProgressLogger::new(module_path!(), Instant::now());
-    let mut vmaf_score = None;
-    while let Some(vmaf) = vmaf.next().await {
-        match vmaf {
-            VmafOut::Done(score) => {
-                vmaf_score = Some(score);
-                break;
-            }
-            VmafOut::Progress(FfmpegOut::Progress {
-                frame, fps, time, ..
-            }) => {
-                if fps > 0.0 {
-                    bar.set_message(format!("vmaf {fps} fps, "));
-                }
-                if nframes.is_ok() {
-                    bar.set_position(frame);
-                }
-                if let Ok(total) = duration {
-                    logger.update(*total, time, fps);
-                }
-            }
-            VmafOut::Progress(FfmpegOut::StreamSizes { .. }) => {}
-            VmafOut::Err(e) => return Err(e),
-        }
-    }
-    bar.finish();
-
-    println!("{}", vmaf_score.context("no vmaf score")?);
-    Ok(())
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let score = parse_vmaf_output(&json_str);
+    debuglog!(debug, "VMAF score: {:?}", score);
+    score
 }
+// ==== Patch End ====
