@@ -9,6 +9,7 @@ mod sample;
 mod temporary;
 mod vmaf;
 mod xpsnr;
+mod log;
 
 use ::log::LevelFilter;
 use anyhow::anyhow;
