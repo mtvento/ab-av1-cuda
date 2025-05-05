@@ -3,3 +3,5 @@
 *.log
 .DS_Store
 *.json
+*.mp4
+*.zip
