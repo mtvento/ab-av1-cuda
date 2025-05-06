@@ -24,7 +24,8 @@ env_logger = { version = "0.11.3", default-features = false, features = [
     "humantime",
 ] }
 fastrand = "2"
-ffmpeg = "4.4.0"
+ffmpeg-the-third = "1"
+ffmpeg-sys-the-third = "3.0.0+ffmpeg-7.1"
 ffprobe = "0.4"
 futures-util = "0.3.19"
 humantime = "2.1"
