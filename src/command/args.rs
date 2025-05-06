@@ -4,6 +4,13 @@ use crate::auto_hw_decoder::auto_select_decoder;
 use crate::cuda_scaling_method::apply_cuda_scaling_method;
 use crate::debuglog;
 
+pub struct Args {
+    pub input: String,
+    pub output: String,
+    pub codec: String,
+    pub use_cuda: bool,
+}
+
 impl Encode {
     pub fn to_ffmpeg_args(&self) -> Vec<String> {
         let mut args = Vec::new();
